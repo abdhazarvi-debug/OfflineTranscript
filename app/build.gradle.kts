@@ -14,16 +14,15 @@ android {
         targetSdk = 35
         versionCode = 2
         versionName = "2.0"
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
         }
-    }
-
-    ndk {
-        abiFilters += setOf("arm64-v8a")
     }
 
     compileOptions {

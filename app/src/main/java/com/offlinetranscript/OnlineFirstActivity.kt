@@ -95,7 +95,7 @@ class OnlineFirstActivity : ComponentActivity() {
 
         urlEdit = EditText(this).apply {
             hint = "https://..."
-            singleLine = true
+            setSingleLine(true)
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
             setPadding(dp(12), dp(10), dp(12), dp(10))
         }
@@ -143,9 +143,9 @@ class OnlineFirstActivity : ComponentActivity() {
         }
 
         val transcriptScroll = ScrollView(this).apply {
-            addView(transcriptText, ScrollView.LayoutParams(
-                ScrollView.LayoutParams.MATCH_PARENT,
-                ScrollView.LayoutParams.WRAP_CONTENT
+            addView(transcriptText, android.view.ViewGroup.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT
             ))
         }
         root.addView(
@@ -395,14 +395,9 @@ class OnlineFirstActivity : ComponentActivity() {
             return Exporters.markdown(sourceUrl, parsed)
         }
 
-        return "# Transcript
-
-" +
-            "Source: " + sourceUrl + "
-
-" +
-            transcript.trim() + "
-"
+        return "# Transcript\\n\\n" +
+            "Source: " + sourceUrl + "\\n\\n" +
+            transcript.trim() + "\\n"
     }
 
     private fun parseTimestampedSegments(text: String): List<TranscriptSegment> {

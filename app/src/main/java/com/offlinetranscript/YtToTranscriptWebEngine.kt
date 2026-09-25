@@ -269,6 +269,9 @@ class YtToTranscriptWebEngine(context: Context) {
             if (active) {
                 submitted = true
                 webView.evaluateJavascript(script, null)
+                main.postDelayed({
+                    if (active) injectExtractScript()
+                }, 1200L)
             }
         }
     }
@@ -375,21 +378,36 @@ class YtToTranscriptWebEngine(context: Context) {
                     return bestText;
                 }
 
-                const text = extractBest();
+                let attempts = 0;
+                const maxAttempts = 55;
 
-                if (text && text.length >= 120
-                    && (timestampCount(text) >= 2 || text.length >= 300)) {
-                    AndroidBridge.done(text);
-                    return;
+                function tryExtract() {
+                    if (attempts++ >= maxAttempts) {
+                        AndroidBridge.fail(
+                            'The online transcript was not ready before the timeout.'
+                        );
+                        return;
+                    }
+
+                    const text = extractBest();
+
+                    if (text && text.length >= 120
+                        && (timestampCount(text) >= 2 || text.length >= 300)) {
+                        AndroidBridge.done(text);
+                        return;
+                    }
+
+                    if (attempts === 1 || attempts % 5 === 0) {
+                        AndroidBridge.progress(
+                            'Waiting for the online transcript… attempt ' +
+                            attempts + '/' + maxAttempts
+                        );
+                    }
+
+                    setTimeout(tryExtract, 2000);
                 }
 
-                setTimeout(function() {
-                    const retry = extractBest();
-                    if (retry && retry.length >= 120
-                        && (timestampCount(retry) >= 2 || retry.length >= 300)) {
-                        AndroidBridge.done(retry);
-                    }
-                }, 1500);
+                tryExtract();
             })();
         """.trimIndent()
 

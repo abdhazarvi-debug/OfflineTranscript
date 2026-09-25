@@ -17,3 +17,6 @@ The app intentionally transcribes media that Android can provide as a file/URI. 
 
 ## Model
 Uses `dev.ffmpegkit-maintained:whisper-android:1.0.0` and the multilingual `ggml-base.bin` model.
+
+
+Build workflow is configured under `.github/workflows/android.yml`.

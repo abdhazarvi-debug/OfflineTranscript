@@ -12,8 +12,8 @@ android {
         applicationId = "com.offlinetranscript"
         minSdk = 24
         targetSdk = 35
-        versionCode = 4
-        versionName = "3.2"
+        versionCode = 5
+        versionName = "3.3"
         ndk {
             abiFilters += "arm64-v8a"
         }

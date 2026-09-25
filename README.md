@@ -1,39 +1,55 @@
-# OfflineTranscript
+# Video Transcript for Android
 
-Free Android app for:
+A free Android transcript tool built around one simple flow:
 
-Paste public social-media video URL -> download media on the phone -> extract audio locally -> transcribe with Whisper locally -> save only TXT or Markdown.
+Paste a public social-media video URL -> get the transcript -> save TXT or Markdown.
 
-## What this version does
+## Current architecture
 
-- Paste a public video URL from YouTube, TikTok, Instagram, Facebook, X/Twitter, Reddit, Vimeo, Dailymotion, and many other yt-dlp-supported sites.
-- The downloader runs inside the Android app with no paid server, no API key, and no transcription cloud service.
-- Only temporary media needed for transcription is kept in the app cache.
-- Temporary downloaded media is deleted after transcription.
-- Export the finished transcript as transcript.txt or transcript.md.
-- No audio export and no SRT export.
-- Urdu + English mixed speech is transcribed with Whisper auto language detection.
-- Whisper transcription runs on-device after the model is downloaded.
-- Public links only. Private/login-required/DRM-protected content is not bypassed.
+This release is online-first.
 
-## Important
+1. The app opens a public web transcription service inside its own WebView and submits one user-requested link.
+2. The app waits for the generated transcript and timestamped text.
+3. The result is shown in the app and can be copied or saved as TXT / Markdown.
+4. When the online engine fails, the app falls back to the original on-device pipeline: yt-dlp Android + Whisper.
 
-The URL engine is powered by the free/open-source yt-dlp Android library. It supports a very large number of sites, but no downloader can guarantee every platform forever: websites can change, require login, use DRM, or block automated requests.
+The current online engine targets public YouTube, Instagram and TikTok links. The local backup can attempt many additional yt-dlp-supported sites, but social platforms can change their protection and availability at any time.
 
-The app itself does not need a paid API or hosted resolver.
+## Important limits
+
+- Public links only.
+- No login, private-content, DRM, bot-protection or access-control bypassing.
+- Internet is required for the online-first path.
+- The online service currently advertises free, no-account transcription, but third-party service availability and limits can change.
+- Transcripts should be reviewed before relying on them for publication, legal, or other high-stakes use.
+
+## Output
+
+- transcript.txt
+- transcript.md
+- No audio export
+- No SRT export in the Android UI
+
+## Language
+
+Whisper fallback uses automatic language detection and is intended for multilingual speech, including Urdu + English mixed speech.
 
 ## Device support
 
 - Android 7.0+ (API 24)
 - arm64-v8a APK
-- First run downloads the multilingual Whisper base model from Hugging Face.
-- The model is verified with SHA-256 before use.
+- First-run local fallback downloads the multilingual Whisper base model.
+- The model file is verified with SHA-256 before use.
 
 ## Build
 
-Open the repository in Android Studio and run the app module, or use the included GitHub Actions workflow.
+Open the repository in Android Studio or use the included GitHub Actions workflow.
 
-## Free components
+## Main components
 
-- yt-dlp-android 2.0.2 — MIT
-- whisper-android 1.0.0 — MIT
+- Android + Kotlin + Jetpack Compose legacy screen kept in source for compatibility
+- Online WebView transcription engine
+- yt-dlp Android local fallback
+- Whisper Android local fallback
+
+The application does not require a paid API key.

@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -37,7 +38,6 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        // A newly shared file is handled after activity recreation by the caller's normal flow.
     }
 
     private fun incomingUri(intent: Intent?): Uri? =
@@ -58,7 +58,6 @@ private fun OfflineTranscriptApp(initialUri: Uri?) {
     var status by remember { mutableStateOf(if (ModelManager.isReady(context)) "Model ready — fully offline" else "First run: model download required") }
     var error by remember { mutableStateOf<String?>(null) }
     var pendingExport by remember { mutableStateOf("") }
-    var pendingMime by remember { mutableStateOf("text/plain") }
     var pendingName by remember { mutableStateOf("transcript.txt") }
 
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -208,7 +207,6 @@ private fun OfflineTranscriptApp(initialUri: Uri?) {
                                 }
                                 OutlinedButton(onClick = {
                                     pendingExport = transcript
-                                    pendingMime = "text/plain"
                                     pendingName = "transcript.txt"
                                     save.launch(pendingName)
                                 }) {
@@ -217,9 +215,7 @@ private fun OfflineTranscriptApp(initialUri: Uri?) {
                                     Text("TXT")
                                 }
                                 OutlinedButton(onClick = {
-                                    val f = Exporters.srt(context, segments)
-                                    pendingExport = f.readText()
-                                    pendingMime = "application/x-subrip"
+                                    pendingExport = Exporters.srt(context, segments).readText()
                                     pendingName = "transcript.srt"
                                     save.launch(pendingName)
                                 }) {

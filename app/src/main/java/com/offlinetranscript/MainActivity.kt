@@ -1,82 +1,199 @@
 package com.offlinetranscript
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.FileDownload
-import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.GraphicEq
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.Button
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.ffmpegkit.whisper.Whisper
 import dev.ffmpegkit.whisper.WhisperConfig
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { OfflineTranscriptApp(initialUri = incomingUri(intent)) }
+        setContent {
+            OfflineTranscriptApp(initialUrl = incomingUrl(intent))
+        }
     }
 
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
+    private fun incomingUrl(intent: Intent?): String? {
+        if (intent?.action != Intent.ACTION_SEND) return null
+        return intent.getStringExtra(Intent.EXTRA_TEXT)?.trim()?.takeIf { it.startsWith("http") }
     }
-
-    private fun incomingUri(intent: Intent?): Uri? =
-        if (intent?.action == Intent.ACTION_SEND) intent.getParcelableExtra(Intent.EXTRA_STREAM) else null
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun OfflineTranscriptApp(initialUri: Uri?) {
+private fun OfflineTranscriptApp(initialUrl: String?) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var inputUri by remember { mutableStateOf(initialUri) }
-    var inputName by remember { mutableStateOf(initialUri?.let { displayName(context, it) } ?: "") }
+
+    var url by remember { mutableStateOf(initialUrl.orEmpty()) }
     var transcript by remember { mutableStateOf("") }
     var segments by remember { mutableStateOf(emptyList<TranscriptSegment>()) }
     var busy by remember { mutableStateOf(false) }
-    var modelProgress by remember { mutableIntStateOf(0) }
-    var status by remember { mutableStateOf(if (ModelManager.isReady(context)) "Model ready — fully offline" else "First run: model download required") }
+    var progress by remember { mutableIntStateOf(0) }
+    var stage by remember { mutableStateOf("Paste a public video link") }
+    var detail by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var pendingExport by remember { mutableStateOf("") }
     var pendingName by remember { mutableStateOf("transcript.txt") }
 
-    val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            inputUri = uri
-            inputName = displayName(context, uri)
-            transcript = ""
-            segments = emptyList()
-            error = null
-            status = "File selected"
-        }
-    }
-    val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument()) { uri ->
+    val save = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri ->
         if (uri != null) {
             runCatching {
-                context.contentResolver.openOutputStream(uri)?.use { it.write(pendingExport.toByteArray(Charsets.UTF_8)) }
-                status = "Saved successfully"
+                context.contentResolver.openOutputStream(uri)?.use {
+                    it.write(pendingExport.toByteArray(Charsets.UTF_8))
+                } ?: error("Could not open output file")
+                stage = "Saved successfully"
             }.onFailure { error = it.message ?: "Could not save file" }
         }
+    }
+
+    fun startTranscription() {
+        val sourceUrl = url.trim()
+        if (!sourceUrl.startsWith("http://") && !sourceUrl.startsWith("https://")) {
+            error = "Paste a valid public video URL."
+            return
+        }
+
+        scope.launch {
+            busy = true
+            error = null
+            transcript = ""
+            segments = emptyList()
+            progress = 0
+            detail = ""
+
+            var downloaded: DownloadedMedia? = null
+            var audio: File? = null
+            try {
+                if (!ModelManager.isReady(context)) {
+                    stage = "Downloading Whisper model (first run)"
+                    withContext(Dispatchers.IO) {
+                        ModelManager.download(context) { p ->
+                            scope.launch { progress = p }
+                        }
+                    }
+                    progress = 100
+                }
+
+                stage = "Downloading video/audio from link"
+                progress = 0
+                downloaded = SocialVideoDownloader.download(context, sourceUrl) { p, line ->
+                    scope.launch {
+                        progress = p
+                        detail = line.takeLast(140)
+                    }
+                }
+
+                stage = "Extracting audio on the phone"
+                detail = "No audio file will be exported"
+                progress = 0
+                audio = withContext(Dispatchers.IO) {
+                    AudioExtractor.extract(context, downloaded!!.file)
+                }
+
+                stage = "Transcribing locally with Whisper"
+                detail = "Internet is not used for transcription"
+                progress = 0
+
+                val handle = withContext(Dispatchers.Default) {
+                    Whisper.loadModel(context, ModelManager.modelFile(context).absolutePath)
+                }
+                try {
+                    val result = withContext(Dispatchers.Default) {
+                        Whisper.transcribe(
+                            handle,
+                            audio!!.absolutePath,
+                            WhisperConfig(
+                                language = "auto",
+                                translate = false,
+                                threads = maxOf(2, Runtime.getRuntime().availableProcessors().coerceAtMost(6)),
+                                printTimestamps = true
+                            )
+                        )
+                    }
+
+                    transcript = result.text.trim()
+                    segments = result.segments.map {
+                        TranscriptSegment(it.startMs, it.endMs, it.text)
+                    }
+
+                    if (transcript.isBlank()) {
+                        error("Whisper returned an empty transcript. The video may have no clear speech.")
+                        stage = "No speech detected"
+                    } else {
+                        stage = "Done — transcript is ready"
+                        detail = "${result.segments.size} timestamped segments"
+                    }
+                } finally {
+                    Whisper.releaseModel(handle)
+                }
+            } catch (t: Throwable) {
+                error = friendlyError(t)
+                stage = "Could not create transcript"
+            } finally {
+                withContext(Dispatchers.IO) {
+                    audio?.delete()
+                    downloaded?.let { SocialVideoDownloader.cleanup(it) }
+                }
+                busy = false
+            }
+        }
+    }
+
+    LaunchedEffect(initialUrl) {
+        if (url.isBlank() && !initialUrl.isNullOrBlank()) url = initialUrl
     }
 
     MaterialTheme {
@@ -86,7 +203,7 @@ private fun OfflineTranscriptApp(initialUri: Uri?) {
                     title = {
                         Column {
                             Text("Offline Transcript", fontWeight = FontWeight.Bold)
-                            Text("Urdu + English • On-device Whisper", style = MaterialTheme.typography.labelSmall)
+                            Text("URL → TXT / MD • 100% on-device", style = MaterialTheme.typography.labelSmall)
                         }
                     }
                 )
@@ -97,91 +214,59 @@ private fun OfflineTranscriptApp(initialUri: Uri?) {
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 ElevatedCard(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("1. Video یا audio منتخب کریں", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Text("Gallery/File Manager سے فائل منتخب کریں، یا کسی social app سے Share → Offline Transcript کریں۔")
-                        Button(
-                            onClick = { pick.launch(arrayOf("video/*", "audio/*")) },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Default.FolderOpen, null)
-                            Spacer(Modifier.width(8.dp))
-                            Text(if (inputName.isBlank()) "Choose media" else inputName)
+                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("1. Video link paste کریں", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text("YouTube, TikTok, Instagram, Facebook, X/Twitter, Reddit, Vimeo اور بہت سے دوسرے public links چل سکتے ہیں۔")
+
+                        OutlinedTextField(
+                            value = url,
+                            onValueChange = { url = it; error = null },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            enabled = !busy,
+                            leadingIcon = { androidx.compose.material3.Icon(Icons.Default.Link, contentDescription = null) },
+                            label = { Text("Video URL") },
+                            placeholder = { Text("https://...") }
+                        )
+
+                        Text(
+                            if (url.isBlank()) "Public video link required" else "Detected: ${detectPlatform(url)}",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = { startTranscription() },
+                                enabled = !busy && url.isNotBlank(),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                androidx.compose.material3.Icon(Icons.Default.Download, null)
+                                Spacer(Modifier.width(8.dp))
+                                Text("Get transcript")
+                            }
+                            OutlinedButton(
+                                onClick = { url = ""; transcript = ""; segments = emptyList(); error = null },
+                                enabled = !busy && (url.isNotBlank() || transcript.isNotBlank())
+                            ) {
+                                androidx.compose.material3.Icon(Icons.Default.Refresh, null)
+                            }
                         }
                     }
                 }
 
                 ElevatedCard(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("2. Transcribe", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Text(status)
-                        if (busy && modelProgress > 0) {
+                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("2. Processing", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text(stage)
+                        if (busy) {
                             LinearProgressIndicator(
-                                progress = { modelProgress / 100f },
-                                Modifier.fillMaxWidth()
+                                progress = { progress.coerceIn(0, 100) / 100f },
+                                modifier = Modifier.fillMaxWidth()
                             )
-                            Text("Model download: $modelProgress%")
+                            Text("$progress%", style = MaterialTheme.typography.labelSmall)
                         }
-                        Button(
-                            enabled = inputUri != null && !busy,
-                            onClick = {
-                                val uri = inputUri ?: return@Button
-                                scope.launch {
-                                    busy = true
-                                    error = null
-                                    try {
-                                        if (!ModelManager.isReady(context)) {
-                                            status = "Downloading multilingual Whisper model…"
-                                            withContext(Dispatchers.IO) {
-                                                ModelManager.download(context) { modelProgress = it }
-                                            }
-                                            modelProgress = 100
-                                        }
-                                        status = "Preparing audio…"
-                                        val local = withContext(Dispatchers.IO) { copyUriToCache(context, uri) }
-                                        val mime = context.contentResolver.getType(uri).orEmpty()
-                                        val audio = if (mime.startsWith("audio/") || local.extension.lowercase() in setOf("wav", "mp3", "flac")) {
-                                            local
-                                        } else {
-                                            withContext(Dispatchers.IO) { AudioExtractor.extract(context, local) }
-                                        }
-
-                                        status = "Transcribing locally…"
-                                        val handle = withContext(Dispatchers.Default) {
-                                            Whisper.loadModel(context, ModelManager.modelFile(context).absolutePath)
-                                        }
-                                        try {
-                                            val result = withContext(Dispatchers.Default) {
-                                                Whisper.transcribe(
-                                                    handle,
-                                                    audio.absolutePath,
-                                                    WhisperConfig(
-                                                        language = "auto",
-                                                        translate = false,
-                                                        threads = maxOf(2, Runtime.getRuntime().availableProcessors().coerceAtMost(6)),
-                                                        printTimestamps = true
-                                                    )
-                                                )
-                                            }
-                                            transcript = result.text.trim()
-                                            segments = result.segments.map { TranscriptSegment(it.startMs, it.endMs, it.text) }
-                                            status = "Done • ${result.segments.size} timestamped segments • ${result.processingTimeMs / 1000}s"
-                                        } finally {
-                                            Whisper.releaseModel(handle)
-                                        }
-                                    } catch (t: Throwable) {
-                                        error = t.message ?: t.javaClass.simpleName
-                                        status = "Transcription failed"
-                                    } finally {
-                                        busy = false
-                                    }
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Default.GraphicEq, null)
-                            Spacer(Modifier.width(8.dp))
-                            Text("Start transcription")
+                        if (detail.isNotBlank()) {
+                            Text(detail, style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 }
@@ -195,33 +280,36 @@ private fun OfflineTranscriptApp(initialUri: Uri?) {
                         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Text("Transcript", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                             Text(transcript)
+
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 OutlinedButton(onClick = {
-                                    val clip = context.getSystemService(android.content.ClipboardManager::class.java)
-                                    clip.setPrimaryClip(android.content.ClipData.newPlainText("Transcript", transcript))
-                                    status = "Transcript copied"
+                                    val clip = context.getSystemService(ClipboardManager::class.java)
+                                    clip.setPrimaryClip(ClipData.newPlainText("Transcript", transcript))
+                                    stage = "Transcript copied"
                                 }) {
-                                    Icon(Icons.Default.ContentCopy, null)
+                                    androidx.compose.material3.Icon(Icons.Default.ContentCopy, null)
                                     Spacer(Modifier.width(6.dp))
                                     Text("Copy")
                                 }
+
                                 OutlinedButton(onClick = {
                                     pendingExport = transcript
                                     pendingName = "transcript.txt"
                                     save.launch(pendingName)
                                 }) {
-                                    Icon(Icons.Default.FileDownload, null)
+                                    androidx.compose.material3.Icon(Icons.Default.Download, null)
                                     Spacer(Modifier.width(6.dp))
                                     Text("TXT")
                                 }
+
                                 OutlinedButton(onClick = {
-                                    pendingExport = Exporters.srt(context, segments).readText()
-                                    pendingName = "transcript.srt"
+                                    pendingExport = Exporters.markdown(sourceUrl = url.trim(), segments = segments)
+                                    pendingName = "transcript.md"
                                     save.launch(pendingName)
                                 }) {
-                                    Icon(Icons.Default.FileDownload, null)
+                                    androidx.compose.material3.Icon(Icons.Default.Article, null)
                                     Spacer(Modifier.width(6.dp))
-                                    Text("SRT")
+                                    Text("MD")
                                 }
                             }
                         }
@@ -229,27 +317,40 @@ private fun OfflineTranscriptApp(initialUri: Uri?) {
                 }
 
                 Text(
-                    "Privacy: transcription runs on the phone after the model is downloaded. The app does not need an API key or cloud transcription service.",
+                    "Free flow: the URL downloader and Whisper engine run on the phone. No paid API, no transcription server, and no audio export.",
                     style = MaterialTheme.typography.bodySmall
                 )
+
+                Spacer(Modifier.height(8.dp))
             }
         }
     }
 }
 
-private fun copyUriToCache(context: android.content.Context, uri: Uri): File {
-    val name = displayName(context, uri).ifBlank { "input_media" }
-    val safe = name.replace(Regex("[^A-Za-z0-9._-]"), "_")
-    val out = File(context.cacheDir, "input_${System.currentTimeMillis()}_$safe")
-    context.contentResolver.openInputStream(uri)?.use { input ->
-        out.outputStream().use { output -> input.copyTo(output) }
-    } ?: error("Could not read selected file")
-    return out
+private fun detectPlatform(url: String): String {
+    return runCatching {
+        val host = Uri.parse(url).host.orEmpty().lowercase().removePrefix("www.")
+        when {
+            "youtube.com" == host || host.endsWith(".youtube.com") || host == "youtu.be" -> "YouTube"
+            host.endsWith("tiktok.com") -> "TikTok"
+            host.endsWith("instagram.com") -> "Instagram"
+            host.endsWith("facebook.com") || host == "fb.watch" -> "Facebook"
+            host == "x.com" || host.endsWith(".x.com") || host == "twitter.com" || host.endsWith(".twitter.com") -> "X / Twitter"
+            host.endsWith("reddit.com") -> "Reddit"
+            host.endsWith("vimeo.com") -> "Vimeo"
+            host.endsWith("dailymotion.com") -> "Dailymotion"
+            else -> host.ifBlank { "Unknown site" }
+        }
+    }.getOrDefault("Unknown site")
 }
 
-private fun displayName(context: android.content.Context, uri: Uri): String {
-    context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
-        if (c.moveToFirst()) return c.getString(0)
+private fun friendlyError(t: Throwable): String {
+    val raw = (t.cause?.message ?: t.message ?: t.javaClass.simpleName).trim()
+    return when {
+        raw.contains("403") -> "The site rejected the download request (HTTP 403). Try another public link or a different time."
+        raw.contains("login", ignoreCase = true) || raw.contains("sign in", ignoreCase = true) -> "This video requires login. The app only handles public links without bypassing access controls."
+        raw.contains("DRM", ignoreCase = true) -> "This video is DRM-protected and cannot be downloaded by the app."
+        raw.length > 240 -> raw.take(237) + "…"
+        else -> raw.ifBlank { "The URL could not be processed." }
     }
-    return uri.lastPathSegment ?: "media"
 }

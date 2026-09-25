@@ -1,6 +1,7 @@
 package com.offlinetranscript
 import android.content.Context
 import java.io.File
+import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest

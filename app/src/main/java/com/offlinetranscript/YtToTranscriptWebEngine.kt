@@ -215,9 +215,19 @@ class YtToTranscriptWebEngine(context: Context) {
 
                 clickDismissers();
 
+                function clean(value) {
+                    return (value || '')
+                        .replace(/\\u00a0/g, ' ')
+                        .replace(/[ \\t]+\\n/g, '\\n')
+                        .replace(/\\n{3,}/g, '\\n\\n')
+                        .trim();
+                }
+
                 // Save static page text before submitting so later extraction can
                 // distinguish dynamic transcript content from FAQ/marketing copy.
-                window.__offlineTranscriptBaseline = clean(document.body.innerText || '');
+                window.__offlineTranscriptBaseline = clean(
+                    (document.body && document.body.innerText) || ''
+                );
 
                 const controls = Array.from(document.querySelectorAll('input,textarea'))
                     .filter(visible);

@@ -1,5 +1,37 @@
 package com.offlinetranscript
-import android.content.Context
-import java.io.File
-data class TranscriptSegment(val startMs:Long,val endMs:Long,val text:String)
-object Exporters{fun srt(context:Context,segments:List<TranscriptSegment>):File=File(context.cacheDir,"transcript_${System.currentTimeMillis()}.srt").also{f->f.printWriter().use{out->segments.forEachIndexed{i,s->out.println(i+1);out.println("${stamp(s.startMs)} --> ${stamp(s.endMs)}");out.println(s.text.trim());out.println()}}};private fun stamp(ms:Long):String{val h=ms/3600000;val m=(ms%3600000)/60000;val s=(ms%60000)/1000;val z=ms%1000;return "%02d:%02d:%02d,%03d".format(h,m,s,z)}}
+
+data class TranscriptSegment(
+    val startMs: Long,
+    val endMs: Long,
+    val text: String
+)
+
+object Exporters {
+    fun markdown(sourceUrl: String, segments: List<TranscriptSegment>): String = buildString {
+        appendLine("# Transcript")
+        appendLine()
+        if (sourceUrl.isNotBlank()) {
+            appendLine("Source: $sourceUrl")
+            appendLine()
+        }
+
+        if (segments.isEmpty()) {
+            appendLine("No timestamped segments were returned.")
+            return@buildString
+        }
+
+        segments.forEach { segment ->
+            appendLine("**${formatTime(segment.startMs)}**")
+            appendLine()
+            appendLine(segment.text.trim())
+            appendLine()
+        }
+    }
+
+    private fun formatTime(ms: Long): String {
+        val hours = ms / 3_600_000
+        val minutes = (ms % 3_600_000) / 60_000
+        val seconds = (ms % 60_000) / 1_000
+        return "%02d:%02d:%02d".format(hours, minutes, seconds)
+    }
+}

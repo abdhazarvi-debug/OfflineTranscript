@@ -327,9 +327,20 @@ class YtToTranscriptWebEngine(context: Context) {
 
                     if (lower.includes('free youtube') || lower.includes('free instagram')
                         || lower.includes('free tiktok') || lower.includes('try a sample link')
-                        || lower.includes('no sign-up') || lower.includes('yttotranscript')) {
-                        score -= 90;
+                        || lower.includes('no sign-up') || lower.includes('yttotranscript')
+                        || lower.includes('how accurate is the transcript')
+                        || lower.includes('how do i transcribe')
+                        || lower.includes('which platforms are supported')
+                        || lower.includes('are my transcripts stored')
+                        || lower.includes('why can’t some videos be transcribed')
+                        || lower.includes('why can\'t some videos be transcribed')) {
+                        score -= 500;
                     }
+
+                    // The site contains a large FAQ below the transcriber. Never
+                    // accept that page copy as a transcript candidate.
+                    if (timestampCount(text) < 2) score -= 500;
+
 
                     if (el.closest('header,nav,footer')) score -= 100;
 
@@ -391,8 +402,7 @@ class YtToTranscriptWebEngine(context: Context) {
 
                     const text = extractBest();
 
-                    if (text && text.length >= 120
-                        && (timestampCount(text) >= 2 || text.length >= 300)) {
+                    if (text && text.length >= 120 && timestampCount(text) >= 2) {
                         AndroidBridge.done(text);
                         return;
                     }

@@ -29,6 +29,13 @@ object SocialVideoDownloader {
                 .addOption("--no-playlist")
                 .addOption("--newline")
                 .addOption("--no-warnings")
+                // TikTok has recently rejected yt-dlp's default browser
+                // impersonation on some networks. A normal browser UA lets
+                // yt-dlp fall back to its native challenge flow.
+                .addOption(
+                    "--user-agent",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:155.0) Gecko/20100101 Firefox/155.0"
+                )
                 .addOption("-f", "bestaudio/best")
 
             var lastLine = ""

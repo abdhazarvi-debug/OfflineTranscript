@@ -20,3 +20,5 @@ Uses `dev.ffmpegkit-maintained:whisper-android:1.0.0` and the multilingual `ggml
 
 
 Build workflow is configured under `.github/workflows/android.yml`.
+
+CI verification test.

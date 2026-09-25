@@ -27,6 +27,8 @@ class YtToTranscriptWebEngine(context: Context) {
 
     companion object {
         private const val HOME_URL = "https://yttotranscript.com/"
+        private const val TIKTOK_URL = "https://yttotranscript.com/tiktok-transcript"
+        private const val INSTAGRAM_URL = "https://yttotranscript.com/instagram-transcript"
         private const val TIMEOUT_MS = 120_000L
     }
 
@@ -153,8 +155,20 @@ class YtToTranscriptWebEngine(context: Context) {
             successListener = onSuccess
             errorListener = onError
             onStage("Opening the free online transcript engine…")
-            webView.loadUrl(HOME_URL)
+            webView.loadUrl(platformLandingUrl(sourceUrl))
             scheduleTimeoutCheck()
+        }
+    }
+
+    private fun platformLandingUrl(url: String): String {
+        val host = runCatching {
+            android.net.Uri.parse(url).host.orEmpty().lowercase().removePrefix("www.")
+        }.getOrDefault("")
+
+        return when {
+            host == "tiktok.com" || host.endsWith(".tiktok.com") -> TIKTOK_URL
+            host == "instagram.com" || host.endsWith(".instagram.com") -> INSTAGRAM_URL
+            else -> HOME_URL
         }
     }
 
@@ -200,6 +214,10 @@ class YtToTranscriptWebEngine(context: Context) {
                 }
 
                 clickDismissers();
+
+                // Save static page text before submitting so later extraction can
+                // distinguish dynamic transcript content from FAQ/marketing copy.
+                window.__offlineTranscriptBaseline = clean(document.body.innerText || '');
 
                 const controls = Array.from(document.querySelectorAll('input,textarea'))
                     .filter(visible);
@@ -282,7 +300,7 @@ class YtToTranscriptWebEngine(context: Context) {
                 function clean(value) {
                     return (value || '')
                         .replace(/\u00a0/g, ' ')
-                        .replace(/[ \t]+\n/g, '\n')
+                        .replace(/[ \\t]+\n/g, '\n')
                         .replace(/\n{3,}/g, '\n\n')
                         .trim();
                 }
@@ -299,8 +317,58 @@ class YtToTranscriptWebEngine(context: Context) {
                     return (text.match(/\b(?:\d{1,2}:)?\d{1,2}:\d{2}\b/g) || []).length;
                 }
 
+                function staticCopy(text) {
+                    const lower = text.toLowerCase();
+                    return lower.includes('how accurate is the transcript')
+                        || lower.includes('how do i transcribe')
+                        || lower.includes('which platforms are supported')
+                        || lower.includes('are my transcripts stored')
+                        || lower.includes('why can’t some videos be transcribed')
+                        || lower.includes("why can't some videos be transcribed")
+                        || lower.includes('try a sample link')
+                        || lower.includes('no sign-up')
+                        || lower.includes('yttotranscript')
+                        || lower.includes('free youtube')
+                        || lower.includes('free instagram')
+                        || lower.includes('free tiktok');
+                }
+
+                function resultSignals() {
+                    const els = Array.from(document.querySelectorAll(
+                        'button,[role="button"],a,input[type="button"],input[type="submit"]'
+                    )).filter(visible);
+
+                    return els.some(el => {
+                        const t = (
+                            el.innerText || el.value || el.getAttribute('aria-label') || ''
+                        ).trim().toLowerCase();
+
+                        return t === 'copy' || t.includes('copy transcript')
+                            || t.includes('download txt') || t.includes('download transcript')
+                            || t === 'srt' || t === 'vtt' || t.includes('export transcript');
+                    });
+                }
+
+                function novelty(text) {
+                    const base = String(window.__offlineTranscriptBaseline || '');
+                    if (!base || !text) return text.length;
+
+                    const baseLines = new Set(
+                        base.split('\n')
+                            .map(s => clean(s).toLowerCase())
+                            .filter(s => s.length >= 8)
+                    );
+
+                    const lines = text.split('\n').map(s => clean(s)).filter(Boolean);
+                    let novelChars = 0;
+                    lines.forEach(line => {
+                        if (!baseLines.has(line.toLowerCase())) novelChars += line.length;
+                    });
+                    return novelChars;
+                }
+
                 function score(el, text) {
-                    if (!text || text.length < 80 || text.length > 60000 || !visible(el)) {
+                    if (!text || text.length < 60 || text.length > 60000 || !visible(el)) {
                         return -99999;
                     }
 
@@ -310,39 +378,25 @@ class YtToTranscriptWebEngine(context: Context) {
                         String(el.getAttribute('aria-label') || '')
                     ).toLowerCase();
 
-                    const lower = text.toLowerCase();
                     let score = 0;
+                    if (meta.includes('transcript')) score += 220;
+                    if (meta.includes('transcription')) score += 140;
+                    if (meta.includes('result')) score += 120;
+                    if (meta.includes('output')) score += 90;
+                    if (meta.includes('caption')) score += 80;
+                    if (el.isContentEditable) score += 80;
+                    if (el.tagName === 'TEXTAREA') score += 80;
+                    if (el.tagName === 'PRE') score += 60;
 
-                    if (meta.includes('transcript')) score += 160;
-                    if (meta.includes('transcription')) score += 120;
-                    if (meta.includes('result')) score += 90;
-                    if (meta.includes('output')) score += 80;
-                    if (meta.includes('caption')) score += 70;
-                    if (el.isContentEditable) score += 70;
-                    if (el.tagName === 'TEXTAREA') score += 70;
-                    if (el.tagName === 'PRE') score += 50;
+                    score += Math.min(timestampCount(text), 30) * 14;
+                    score += Math.min(novelty(text) / 40, 60);
 
-                    score += Math.min(timestampCount(text), 30) * 10;
-                    score += Math.min(text.length / 150, 30);
+                    const childCount = el.children ? el.children.length : 0;
+                    score -= Math.min(childCount, 50) * 0.8;
 
-                    if (lower.includes('free youtube') || lower.includes('free instagram')
-                        || lower.includes('free tiktok') || lower.includes('try a sample link')
-                        || lower.includes('no sign-up') || lower.includes('yttotranscript')
-                        || lower.includes('how accurate is the transcript')
-                        || lower.includes('how do i transcribe')
-                        || lower.includes('which platforms are supported')
-                        || lower.includes('are my transcripts stored')
-                        || lower.includes('why can’t some videos be transcribed')
-                        || lower.includes('why can\'t some videos be transcribed')) {
-                        score -= 500;
-                    }
-
-                    // The site contains a large FAQ below the transcriber. Never
-                    // accept that page copy as a transcript candidate.
-                    if (timestampCount(text) < 2) score -= 500;
-
-
-                    if (el.closest('header,nav,footer')) score -= 100;
+                    if (staticCopy(text)) score -= 700;
+                    if (el.closest('header,nav,footer')) score -= 150;
+                    if (el === document.body) score -= 180;
 
                     return score;
                 }
@@ -354,7 +408,8 @@ class YtToTranscriptWebEngine(context: Context) {
                         mainRoot.querySelectorAll(
                             'textarea,pre,[contenteditable="true"],' +
                             '[id*="transcript" i],[class*="transcript" i],' +
-                            '[id*="result" i],[class*="result" i],div,section,article'
+                            '[id*="result" i],[class*="result" i],' +
+                            'div,section,article,p'
                         )
                     );
 
@@ -370,23 +425,26 @@ class YtToTranscriptWebEngine(context: Context) {
                         }
                     });
 
-                    if (timestampCount(bestText) >= 3 && bestText.length >= 220) {
-                        const lines = bestText.split('\n').map(s => s.trim()).filter(Boolean);
-                        const firstTs = lines.findIndex(line =>
-                            /\b(?:\d{1,2}:)?\d{1,2}:\d{2}\b/.test(line)
-                        );
+                    return bestText;
+                }
 
-                        let trimmed = firstTs >= 0 ? lines.slice(firstTs) : lines;
+                function trimTranscript(text) {
+                    let lines = text.split('\n').map(s => s.trim()).filter(Boolean);
 
-                        const stop = trimmed.findIndex(line =>
-                            /^(export|download|share|copy transcript|reading time|word count)$/i.test(line)
-                        );
-                        if (stop > 0) trimmed = trimmed.slice(0, stop);
+                    const firstTs = lines.findIndex(line =>
+                        /\b(?:\d{1,2}:)?\d{1,2}:\d{2}\b/.test(line)
+                    );
 
-                        bestText = clean(trimmed.join('\n'));
+                    if (firstTs >= 0 && timestampCount(text) >= 2) {
+                        lines = lines.slice(firstTs);
                     }
 
-                    return bestText;
+                    const stop = lines.findIndex(line =>
+                        /^(export|download|share|copy transcript|reading time|word count)$/i.test(line)
+                    );
+                    if (stop > 0) lines = lines.slice(0, stop);
+
+                    return clean(lines.join('\n'));
                 }
 
                 let attempts = 0;
@@ -401,10 +459,23 @@ class YtToTranscriptWebEngine(context: Context) {
                     }
 
                     const text = extractBest();
+                    const timestamps = timestampCount(text);
+                    const novelChars = novelty(text);
+                    const hasSignals = resultSignals();
 
-                    if (text && text.length >= 120 && timestampCount(text) >= 2) {
-                        AndroidBridge.done(text);
-                        return;
+                    const validTimestamped =
+                        text.length >= 120 && timestamps >= 2 && novelChars >= 80;
+
+                    const validResult =
+                        text.length >= 120 && novelChars >= 120 &&
+                        hasSignals && !staticCopy(text);
+
+                    if (validTimestamped || validResult) {
+                        const cleaned = trimTranscript(text);
+                        if (cleaned.length >= 120 && !staticCopy(cleaned)) {
+                            AndroidBridge.done(cleaned);
+                            return;
+                        }
                     }
 
                     if (attempts === 1 || attempts % 5 === 0) {

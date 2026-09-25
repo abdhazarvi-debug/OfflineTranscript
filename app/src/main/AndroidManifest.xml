@@ -5,13 +5,13 @@
 
     <application
         android:theme="@style/Theme.OfflineTranscript"
-        android:label="Offline Transcript"
+        android:label="Video Transcript"
         android:allowBackup="true"
         android:supportsRtl="true"
         android:extractNativeLibs="true">
 
         <activity
-            android:name=".MainActivity"
+            android:name=".OnlineFirstActivity"
             android:exported="true">
 
             <intent-filter>
